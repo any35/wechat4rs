@@ -1,0 +1,20 @@
+[package]
+name = "wechat4rs"
+version = "0.1.0"
+authors = ["Walter ye <hupeng.net@hotmail.com>"]
+license = "MIT OR Apache-2.0"
+description = "微信sdk"
+repository = "https://github.com/any35/wechat4rs"
+homepate = "https://github.com/any35/wechat4rs"
+documentation = "https://docs.serde.rs/wechat4rs"
+edition = "2018"
+keywords = ["wechat", "skd"]
+categories = ["api-bindings", "web-programming"]
+readme = "README.md"
+include = ["Cargo.toml", "src/**/*.rs", "tests/**/*.rs", "README.md"]
+
+[features]
+default = []
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
