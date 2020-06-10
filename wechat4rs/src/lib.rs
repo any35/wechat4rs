@@ -1,7 +1,8 @@
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+mod core;
+mod message;
+mod wechat;
+
+pub use crate::core::*;
+pub use message::crypt::VerifyInfo;
+pub use message::*;
+pub use wechat::*;

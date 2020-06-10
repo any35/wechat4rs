@@ -1,2 +1,2 @@
 [workspace]
-members = ["wechat4rs"]
+members = ["wechat4rs", "example"]
