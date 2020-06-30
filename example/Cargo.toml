@@ -21,3 +21,6 @@ async-trait = "0.1"
 anyhow = { version = "1.0", default-features = true }
 thiserror = "1.0"
 smol = { version = "0.1", features = ["tokio02"] }
+redis = "0.15"
+bb8-redis = "0.5"
+bb8 = "0.4"

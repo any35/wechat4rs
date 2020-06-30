@@ -1,12 +1,12 @@
 [package]
 name = "wechat4rs"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Walter ye <hupeng.net@hotmail.com>"]
 license = "MIT OR Apache-2.0"
 description = "微信sdk"
 repository = "https://github.com/any35/wechat4rs"
 homepate = "https://github.com/any35/wechat4rs"
-documentation = "https://docs.serde.rs/wechat4rs"
+documentation = "https://docs.rs/wechat4rs"
 edition = "2018"
 keywords = ["wechat", "skd"]
 categories = ["api-bindings", "web-programming"]
@@ -25,11 +25,12 @@ tokio = { version = "0.2", features = ["full"] }
 tokio-util = { version = "0.3", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_repr = "0.1"
 async-trait = "0.1"
 anyhow = { version = "1.0", default-features = true }
 thiserror = "1.0"
 smol = { version = "0.1", features = ["tokio02"] }
-shaku = "0.4"
+shaku = "0.5.0"
 maplit = "1.0"
 chrono = "0"
 regex = "1"
@@ -46,3 +47,12 @@ hex = "0.4"
 # actix-web
 actix-web = "2"
 http = "0"
+# rest client
+reqwest = { version = "0.10", features = ["json"] }
+lazy_static = "1.4"
+async-mutex = "1.1"
+# redis token provider
+redis = "0.15"
+bb8-redis = "0.5"
+bb8 = "0.4"
+#either = { version = "1.5", features = ["serde"] }

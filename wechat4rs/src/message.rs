@@ -1,9 +1,9 @@
 use crate::core::{WechatEncryptError, WechatError};
-use log::{info};
+use log::info;
 
-/// 事件消息
+/// 普通回调事件消息
 #[derive(Debug, PartialEq, Clone)]
-pub enum EventMessage {
+pub enum NormalEventMessage {
     /// 订阅
     Subscribe {},
     /// 取消订阅
@@ -23,6 +23,9 @@ pub enum EventMessage {
         ticket: String,
     },
     /// 上报地理位置事件
+    /// 用户同意上报地理位置后，每次进入公众号会话时，都会在进入时上报地理位置，
+    /// 或在进入会话后每5秒上报一次地理位置，公众号可以在公众平台网站中修改以上设置。
+    /// 上报地理位置时，微信会将上报地理位置事件推送到开发者填写的URL。
     Location {
         /// 地理位置纬度
         lat: f64,
@@ -31,13 +34,90 @@ pub enum EventMessage {
         /// 地理位置精度
         precesion: f64,
     },
-    /// 自定义菜单事件
+}
+
+///  ============== 以下为菜单事件 ========================
+#[derive(Debug, PartialEq, Clone)]
+pub enum MenuEventMessage {
+    /// 自定义菜单事件, 点击菜单拉取消息时的事件推送
     Click {
         /// 事件KEY值，与自定义菜单接口中KEY值对应
         event_key: String,
-    },
+    },  
     /// 点击菜单跳转链接时的事件推送
-    View { event_key: String },
+    View { 
+        /// 事件KEY值，设置的跳转URL
+        event_key: String,
+        /// 指菜单ID，如果是个性化菜单，则可以通过这个字段，知道是哪个规则的菜单被点击了。
+        menu_id: Option<String>,
+     },
+    /// 扫码推事件的事件推送
+    ScanCodePush {
+        /// 事件KEY值，由开发者在创建菜单时设定
+        event_key: String,
+        /// 扫描类型，一般是qrcode
+        scan_type: String,
+        /// 扫描结果，即二维码对应的字符串信息
+        scan_result: String,
+    },
+    /// 扫码推事件且弹出“消息接收中”提示框的事件推送
+    ScanCodeWaitMsg {
+        /// 事件KEY值，由开发者在创建菜单时设定
+        event_key: String,
+        /// 扫描类型，一般是qrcode
+        scan_type: String,
+        /// 扫描结果，即二维码对应的字符串信息
+        scan_result: String,
+    },
+    /// 弹出系统拍照发图的事件推送
+    PicSysPhoto {
+        /// 事件KEY值，由开发者在创建菜单时设定
+        event_key: String,
+        /// 发送的图片数量
+        count: i32,
+        /// 图片的MD5值，开发者若需要，可用于验证接收到图片
+        pic_md5_sum: Vec<String>,
+    },
+    /// 弹出拍照或者相册发图的事件推送
+    PicPhotoOrAlbum {
+        /// 事件KEY值，由开发者在创建菜单时设定
+        event_key: String,
+        /// 发送的图片数量
+        count: i32,
+        /// 图片的MD5值，开发者若需要，可用于验证接收到图片
+        pic_md5_sum: Vec<String>,
+    }, 
+    /// 弹出微信相册发图器的事件推送
+    PicWeixin {
+        /// 事件KEY值，由开发者在创建菜单时设定
+        event_key: String,
+        /// 发送的图片数量
+        count: i32,
+        /// 图片的MD5值，开发者若需要，可用于验证接收到图片
+        pic_md5_sum: Vec<String>,
+    },     
+    /// 弹出地理位置选择器的事件推送
+    LocationSelect {
+        /// 事件KEY值，由开发者在创建菜单时设定
+        event_key: String,
+        /// X坐标信息
+        x: f64,
+        /// Y坐标信息
+        y: f64,
+        /// 精度，可理解为精度或者比例尺、越精细的话 scale越高
+        scale: i32,
+        /// 地理位置的字符串信息
+        label: String,
+        /// 朋友圈POI的名字
+        poin_name: Option<String>,
+    },
+    /// 点击菜单跳转小程序的事件推送
+    ViewMiniProgram {
+        /// 事件KEY值，跳转的小程序路径
+        event_key:String,
+        /// 菜单ID，如果是个性化菜单，则可以通过这个字段，知道是哪个规则的菜单被点击了
+        menu_id: String,
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -61,7 +141,7 @@ pub enum CallbackMessage {
         /// 文本消息内容
         content: String,
         /// 菜单消息
-        biz_msg_menu_id: Option<String>,
+        biz_msg_menu_id: Option<String>, // todo
     },
     /// 图片消息
     Image {
@@ -119,11 +199,16 @@ pub enum CallbackMessage {
         /// 消息链接
         url: String,
     },
-    /// 回调事件
+    /// 普通回调事件
     Event {
         info: MessageInfo,
-        event: EventMessage,
+        event: NormalEventMessage,
     },
+    /// 菜单事件
+    MenuMessage  {
+        info: MessageInfo,
+        event: MenuEventMessage,
+    }
 }
 
 pub fn from_xml(xml: &str) -> Result<CallbackMessage, WechatError> {
@@ -135,8 +220,24 @@ pub fn from_xml(xml: &str) -> Result<CallbackMessage, WechatError> {
 
     let get_string = |path: &str| -> Result<String, WechatError> {
         let path = format!("/xml/{}", path);
-        Ok(evaluate_xpath(&doc, &path)?.string())
+        Ok(evaluate_xpath(&doc, &path)?.string().trim().into())
     };
+
+    let get_string_vec = |path: &str| -> Result<Vec<String>, WechatError> {
+        use sxd_xpath::Value;
+        let path = format!("/xml/{}", path);
+        let value = evaluate_xpath(&doc, &path)?;
+        let mut result = Vec::new();
+        if let Value::Nodeset(nodes) =  value {
+            for node in nodes.document_order() {
+                result.push(node.string_value().trim().into());
+            }
+        } else {
+            result.push(value.string().trim().into());
+        }
+        Ok(result)
+    };
+
 
     let get_f64_option = |path: &str| -> Result<Option<f64>, WechatError> {
         let path = format!("/xml/{}", path);
@@ -227,34 +328,95 @@ pub fn from_xml(xml: &str) -> Result<CallbackMessage, WechatError> {
         "event" => {
             let event = get_string("Event")?;
             let event_key = get_string("EventKey")?;
-            let event = match event.as_str() {
+            match event.as_str() {
+                // 普通事件
                 "subscribe" => {
                     if event_key.is_empty() {
-                        EventMessage::Subscribe {}
+                        CallbackMessage::Event{info,event: NormalEventMessage::Subscribe {}}
                     } else {
-                        EventMessage::QrSubscribe {
-                            event_key,
+                        CallbackMessage::Event{info, event: NormalEventMessage::QrSubscribe {
+                            event_key: event_key.clone(),
                             ticket: get_string("Ticket")?,
-                        }
+                        }}
                     }
                 }
-                "SCAN" => EventMessage::Scan {
-                    event_key,
+                "SCAN" => CallbackMessage::Event{info, event: NormalEventMessage::Scan {
+                    event_key: event_key.clone(),
                     ticket: get_string("Ticket")?,
-                },
-                "LOCATION" => EventMessage::Location {
+                }},
+                "LOCATION" =>CallbackMessage::Event{info, event: NormalEventMessage::Location {
                     lat: get_f64("Latitude")?,
                     lng: get_f64("Longitude")?,
                     precesion: get_f64("Precision")?,
+                }},
+                // 菜单事件
+                "CLICK" => CallbackMessage::MenuMessage{info, event: MenuEventMessage::Click { event_key }},
+                "VIEW" => CallbackMessage::MenuMessage{info, event: MenuEventMessage::View { 
+                    event_key,
+                    menu_id: get_string_optional("MenuID")?,
+                }},
+                "scancode_push" => CallbackMessage::MenuMessage{
+                    info, event: MenuEventMessage::ScanCodePush {
+                        event_key,
+                        scan_type: get_string("ScanCodeInfo/ScanType")?,
+                        scan_result: get_string("ScanCodeInfo/ScanResult")?,
+                    }
+                }, 
+                "scancode_waitmsg" => CallbackMessage::MenuMessage{
+                    info, event: MenuEventMessage::ScanCodeWaitMsg {
+                        event_key,
+                        scan_type: get_string("ScanCodeInfo/ScanType")?,
+                        scan_result: get_string("ScanCodeInfo/ScanResult")?,
+                    }
                 },
-                "CLICK" => EventMessage::Click { event_key },
-                "VIEW" => EventMessage::View { event_key },
+                "pic_sysphoto" => {
+                    CallbackMessage::MenuMessage {
+                        info, event: MenuEventMessage::PicSysPhoto {
+                            event_key,
+                            count: get_u64("SendPicsInfo/Count")? as i32,
+                            pic_md5_sum: get_string_vec("SendPicsInfo/PicList/*/PicMd5Sum")?,
+                        }
+                    }
+                },
+                "pic_photo_or_album" => {
+                    CallbackMessage::MenuMessage {
+                        info, event: MenuEventMessage::PicPhotoOrAlbum {
+                            event_key,
+                            count: get_u64("SendPicsInfo/Count")? as i32,
+                            pic_md5_sum: get_string_vec("SendPicsInfo/PicList/*/PicMd5Sum")?,
+                        }
+                    }
+                },
+                "pic_weixin" => {
+                    CallbackMessage::MenuMessage {
+                        info, event: MenuEventMessage::PicWeixin {
+                            event_key,
+                            count: get_u64("SendPicsInfo/Count")? as i32,
+                            pic_md5_sum: get_string_vec("SendPicsInfo/PicList/*/PicMd5Sum")?,
+                        }
+                    }
+                },
+                "location_select" => CallbackMessage::MenuMessage{
+                    info, event: MenuEventMessage::LocationSelect {
+                        event_key,
+                        x: get_f64("SendLocationInfo/Location_X")?,
+                        y: get_f64("SendLocationInfo/Location_Y")?,
+                        scale: get_f64("SendLocationInfo/Scale")? as i32,
+                        label: get_string("SendLocationInfo/Label")?,
+                        poin_name: get_string_optional("SendLocationInfo/Poiname")?,
+                    }
+                },
+                "view_miniprogram" => CallbackMessage::MenuMessage {
+                    info, event: MenuEventMessage::ViewMiniProgram {
+                        event_key,
+                        menu_id: get_string("MenuId")?,
+                    }
+                },
                 e @ _ => {
                     print!("{}", e);
-                    unreachable!()
+                    todo!()
                 }
-            };
-            CallbackMessage::Event { info, event }
+            }
         }
         _ => {
             todo!();
@@ -781,7 +943,7 @@ mod callback_message_tests {
                     create_time: 123456789,
                     msg_id: None,
                 },
-                event: EventMessage::Subscribe {}
+                event: NormalEventMessage::Subscribe {}
             },
             msg
         );
@@ -809,7 +971,7 @@ mod callback_message_tests {
                     create_time: 123456789,
                     msg_id: None,
                 },
-                event: EventMessage::QrSubscribe {
+                event: NormalEventMessage::QrSubscribe {
                     event_key: "qrscene_123123".into(),
                     ticket: "TICKET".into(),
                 }
@@ -840,7 +1002,7 @@ mod callback_message_tests {
                     create_time: 123456789,
                     msg_id: None,
                 },
-                event: EventMessage::Scan {
+                event: NormalEventMessage::Scan {
                     event_key: "SCENE_VALUE".into(),
                     ticket: "TICKET".into(),
                 }
@@ -872,7 +1034,7 @@ mod callback_message_tests {
                     create_time: 123456789,
                     msg_id: None,
                 },
-                event: EventMessage::Location {
+                event: NormalEventMessage::Location {
                     lat: 23.137466,
                     lng: 113.352425,
                     precesion: 119.385040,
@@ -884,7 +1046,7 @@ mod callback_message_tests {
     }
 
     #[test]
-    fn test_event_click() -> Result<(), WechatError> {
+    fn test_menu_event_click() -> Result<(), WechatError> {
         let msg = from_xml(
             r#"<xml>
   <ToUserName><![CDATA[toUser]]></ToUserName>
@@ -896,14 +1058,14 @@ mod callback_message_tests {
 </xml>"#,
         )?;
         assert_eq!(
-            CallbackMessage::Event {
+            CallbackMessage::MenuMessage {
                 info: MessageInfo {
                     to_user_name: "toUser".into(),
                     from_user_name: "FromUser".into(),
                     create_time: 123456789,
                     msg_id: None,
                 },
-                event: EventMessage::Click {
+                event: MenuEventMessage::Click {
                     event_key: "EVENTKEY".into(),
                 }
             },
@@ -913,7 +1075,7 @@ mod callback_message_tests {
     }
 
     #[test]
-    fn test_event_view() -> Result<(), WechatError> {
+    fn test_menu_event_view() -> Result<(), WechatError> {
         let msg = from_xml(
             r#"<xml>
   <ToUserName><![CDATA[toUser]]></ToUserName>
@@ -925,21 +1087,272 @@ mod callback_message_tests {
 </xml>"#,
         )?;
         assert_eq!(
-            CallbackMessage::Event {
+            CallbackMessage::MenuMessage {
                 info: MessageInfo {
                     to_user_name: "toUser".into(),
                     from_user_name: "FromUser".into(),
                     create_time: 123456789,
                     msg_id: None,
                 },
-                event: EventMessage::View {
+                event: MenuEventMessage::View {
                     event_key: "www.qq.com".into(),
+                    menu_id: None,
                 }
             },
             msg
         );
         Ok(())
     }
+
+    #[test]
+    fn test_menu_event_scancode_push() -> Result<(), WechatError> {
+        let msg = from_xml(
+            r#"<xml>
+<ToUserName><![CDATA[gh_e136c6e50636]]></ToUserName>
+<FromUserName><![CDATA[oMgHVjngRipVsoxg6TuX3vz6glDg]]></FromUserName>
+<CreateTime>1408090502</CreateTime>
+<MsgType><![CDATA[event]]></MsgType>
+<Event><![CDATA[scancode_push]]></Event>
+<EventKey><![CDATA[6]]></EventKey>
+<ScanCodeInfo><ScanType><![CDATA[qrcode]]></ScanType>
+<ScanResult><![CDATA[1]]></ScanResult>
+</ScanCodeInfo>
+</xml>"#,
+        )?;
+        assert_eq!(
+            CallbackMessage::MenuMessage {
+                info: MessageInfo {
+                    to_user_name: "gh_e136c6e50636".into(),
+                    from_user_name: "oMgHVjngRipVsoxg6TuX3vz6glDg".into(),
+                    create_time: 1408090502,
+                    msg_id: None,
+                },
+                event: MenuEventMessage::ScanCodePush {
+                    event_key: "6".into(),
+                    scan_type: "qrcode".into(),
+                    scan_result: "1".into(),
+                }
+            },
+            msg
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_menu_event_scancode_waitmsg() -> Result<(), WechatError> {
+        let msg = from_xml(
+            r#"<xml>
+<ToUserName><![CDATA[gh_e136c6e50636]]></ToUserName>
+<FromUserName><![CDATA[oMgHVjngRipVsoxg6TuX3vz6glDg]]></FromUserName>
+<CreateTime>1408090606</CreateTime>
+<MsgType><![CDATA[event]]></MsgType>
+<Event><![CDATA[scancode_waitmsg]]></Event>
+<EventKey><![CDATA[6]]></EventKey>
+<ScanCodeInfo><ScanType><![CDATA[qrcode]]></ScanType>
+<ScanResult><![CDATA[2]]></ScanResult>
+</ScanCodeInfo>
+</xml>"#,
+        )?;
+        assert_eq!(
+            CallbackMessage::MenuMessage {
+                info: MessageInfo {
+                    to_user_name: "gh_e136c6e50636".into(),
+                    from_user_name: "oMgHVjngRipVsoxg6TuX3vz6glDg".into(),
+                    create_time: 1408090606,
+                    msg_id: None,
+                },
+                event: MenuEventMessage::ScanCodeWaitMsg {
+                    event_key: "6".into(),
+                    scan_type: "qrcode".into(),
+                    scan_result: "2".into(),
+                }
+            },
+            msg
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_menu_event_pic_sysphoto() -> Result<(), WechatError> {
+        let msg = from_xml(
+            r#"<xml>
+<ToUserName><![CDATA[gh_e136c6e50636]]></ToUserName>
+<FromUserName><![CDATA[oMgHVjngRipVsoxg6TuX3vz6glDg]]></FromUserName>
+<CreateTime>1408090651</CreateTime>
+<MsgType><![CDATA[event]]></MsgType>
+<Event><![CDATA[pic_sysphoto]]></Event>
+<EventKey><![CDATA[6]]></EventKey>
+<SendPicsInfo><Count>2</Count>
+<PicList>
+<item><PicMd5Sum><![CDATA[1b5f7c23b5bf75682a53e7b6d163e185]]></PicMd5Sum></item>
+<item><PicMd5Sum><![CDATA[1b5f7c23b5bf75682a53e7b6d163e186]]></PicMd5Sum></item>
+</PicList>
+</SendPicsInfo>
+</xml>"#,
+        )?;
+        assert_eq!(
+            CallbackMessage::MenuMessage {
+                info: MessageInfo {
+                    to_user_name: "gh_e136c6e50636".into(),
+                    from_user_name: "oMgHVjngRipVsoxg6TuX3vz6glDg".into(),
+                    create_time: 1408090651,
+                    msg_id: None,
+                },
+                event: MenuEventMessage::PicSysPhoto {
+                    event_key: "6".into(),
+                    count: 2,
+                    pic_md5_sum: vec!["1b5f7c23b5bf75682a53e7b6d163e185".into(), "1b5f7c23b5bf75682a53e7b6d163e186".into()],
+                }
+            },
+            msg
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_menu_event_pic_photo_or_album() -> Result<(), WechatError> {
+        let msg = from_xml(
+            r#"<xml>
+<ToUserName><![CDATA[gh_e136c6e50636]]></ToUserName>
+<FromUserName><![CDATA[oMgHVjngRipVsoxg6TuX3vz6glDg]]></FromUserName>
+<CreateTime>1408090816</CreateTime>
+<MsgType><![CDATA[event]]></MsgType>
+<Event><![CDATA[pic_photo_or_album]]></Event>
+<EventKey><![CDATA[6]]></EventKey>
+<SendPicsInfo><Count>1</Count>
+<PicList>
+<item><PicMd5Sum><![CDATA[5a75aaca956d97be686719218f275c6b]]></PicMd5Sum></item>
+</PicList>
+</SendPicsInfo>
+</xml>"#,
+        )?;
+        assert_eq!(
+            CallbackMessage::MenuMessage {
+                info: MessageInfo {
+                    to_user_name: "gh_e136c6e50636".into(),
+                    from_user_name: "oMgHVjngRipVsoxg6TuX3vz6glDg".into(),
+                    create_time: 1408090816,
+                    msg_id: None,
+                },
+                event: MenuEventMessage::PicPhotoOrAlbum {
+                    event_key: "6".into(),
+                    count: 1,
+                    pic_md5_sum: vec!["5a75aaca956d97be686719218f275c6b".into(),],
+                }
+            },
+            msg
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_menu_event_pic_weixin() -> Result<(), WechatError> {
+        let msg = from_xml(
+            r#"<xml>
+<ToUserName><![CDATA[gh_e136c6e50636]]></ToUserName>
+<FromUserName><![CDATA[oMgHVjngRipVsoxg6TuX3vz6glDg]]></FromUserName>
+<CreateTime>1408090816</CreateTime>
+<MsgType><![CDATA[event]]></MsgType>
+<Event><![CDATA[pic_weixin]]></Event>
+<EventKey><![CDATA[6]]></EventKey>
+<SendPicsInfo><Count>1</Count>
+<PicList>
+<item><PicMd5Sum><![CDATA[5a75aaca956d97be686719218f275c6b]]></PicMd5Sum></item>
+</PicList>
+</SendPicsInfo>
+</xml>"#,
+        )?;
+        assert_eq!(
+            CallbackMessage::MenuMessage {
+                info: MessageInfo {
+                    to_user_name: "gh_e136c6e50636".into(),
+                    from_user_name: "oMgHVjngRipVsoxg6TuX3vz6glDg".into(),
+                    create_time: 1408090816,
+                    msg_id: None,
+                },
+                event: MenuEventMessage::PicWeixin {
+                    event_key: "6".into(),
+                    count: 1,
+                    pic_md5_sum: vec!["5a75aaca956d97be686719218f275c6b".into(),],
+                }
+            },
+            msg
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_menu_event_location_select() -> Result<(), WechatError> {
+        let msg = from_xml(
+            r#"<xml>
+<ToUserName><![CDATA[gh_e136c6e50636]]></ToUserName>
+<FromUserName><![CDATA[oMgHVjngRipVsoxg6TuX3vz6glDg]]></FromUserName>
+<CreateTime>1408091189</CreateTime>
+<MsgType><![CDATA[event]]></MsgType>
+<Event><![CDATA[location_select]]></Event>
+<EventKey><![CDATA[6]]></EventKey>
+<SendLocationInfo><Location_X><![CDATA[23]]></Location_X>
+<Location_Y><![CDATA[113]]></Location_Y>
+<Scale><![CDATA[15]]></Scale>
+<Label><![CDATA[ 广州市海珠区客村艺苑路 106号]]></Label>
+<Poiname><![CDATA[]]></Poiname>
+</SendLocationInfo>
+</xml>"#,
+        )?;
+        assert_eq!(
+            CallbackMessage::MenuMessage {
+                info: MessageInfo {
+                    to_user_name: "gh_e136c6e50636".into(),
+                    from_user_name: "oMgHVjngRipVsoxg6TuX3vz6glDg".into(),
+                    create_time: 1408091189,
+                    msg_id: None,
+                },
+                event: MenuEventMessage::LocationSelect {
+                    event_key: "6".into(),
+                    x: 23f64,
+                    y: 113f64,
+                    scale: 15,
+                    label: "广州市海珠区客村艺苑路 106号".into(),
+                    poin_name: None,
+                }
+            },
+            msg
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_menu_event_view_miniprogram() -> Result<(), WechatError> {
+        let msg = from_xml(
+            r#"<xml>
+<ToUserName><![CDATA[toUser]]></ToUserName>
+<FromUserName><![CDATA[FromUser]]></FromUserName>
+<CreateTime>123456789</CreateTime>
+<MsgType><![CDATA[event]]></MsgType>
+<Event><![CDATA[view_miniprogram]]></Event>
+<EventKey><![CDATA[pages/index/index]]></EventKey>
+<MenuId>MENUID</MenuId>
+</xml>"#,
+        )?;
+        assert_eq!(
+            CallbackMessage::MenuMessage {
+                info: MessageInfo {
+                    to_user_name: "toUser".into(),
+                    from_user_name: "FromUser".into(),
+                    create_time: 123456789,
+                    msg_id: None,
+                },
+                event: MenuEventMessage::ViewMiniProgram {
+                    event_key: "pages/index/index".into(),
+                    menu_id: "MENUID".into(),
+                }
+            },
+            msg
+        );
+        Ok(())
+    }
+
+
 }
 
 #[cfg(test)]
@@ -1064,6 +1477,7 @@ pub mod crypt {
 
     use std::io::Cursor;
 
+    use crate::core::WechatConfig;
     use base64;
     use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
     use openssl::symm;
@@ -1092,7 +1506,7 @@ pub mod crypt {
     }
 
     #[derive(Debug, Eq, PartialEq)]
-    pub struct PrpCrypto {
+    pub(crate) struct PrpCrypto {
         key: Vec<u8>,
     }
 
@@ -1138,153 +1552,152 @@ pub mod crypt {
         }
     }
 
-    pub trait WeChatCrypto {
-       fn get_signature( &self, timestamp: i64, nonce: &str, encrypted: &str,) -> Result<String, WechatEncryptError>;
-
-        fn verify_base(&self, verify_info: &VerifyInfo) -> Result<(), WechatEncryptError>;
-        fn verify_message( &self, verify_info: &VerifyInfo, msg: &String,) -> Result<(), WechatEncryptError>;
-
-        fn decrypt_echostr( &self, verify_info: &VerifyInfo, echo_str: &String,) -> Result<String, WechatEncryptError>; 
-        fn encrypt_message( &self, msg: &str, timestamp: i64, nonce: &str,) -> Result<String, WechatEncryptError>; 
-        fn decrypt_message( &self, verify_info: &VerifyInfo, xml: &str,) -> Result<String, WechatEncryptError>;
+    // 加密解密
+    pub fn get_signature(
+        token: &String,
+        timestamp: i64,
+        nonce: &str,
+        encrypted: &str,
+    ) -> Result<String, WechatEncryptError> {
+        let mut data = vec![
+            token.clone(),
+            timestamp.to_string(),
+            nonce.to_owned(),
+            encrypted.to_owned(),
+        ];
+        data.sort();
+        let data_str = data.join("");
+        let mut hasher = openssl::sha::Sha1::new();
+        hasher.update(data_str.as_bytes());
+        let signature = hasher.finish();
+        Ok(hex::encode(signature))
     }
 
-    use crate::core::WechatConfig;
+    /// 校验基础的消息头
+    pub fn verify_base(token: &String, verify_info: &VerifyInfo) -> Result<(), WechatEncryptError> {
+        let real_signature = get_signature(token, verify_info.timestamp, &verify_info.nonce, &"")?;
 
-    impl WeChatCrypto for WechatConfig {
-        fn get_signature( &self, timestamp: i64, nonce: &str, encrypted: &str,) -> Result<String, WechatEncryptError> {
-            let mut data = vec![
-                self.token_string(),
-                timestamp.to_string(),
-                nonce.to_owned(),
-                encrypted.to_owned(),
-            ];
-            data.sort();
-            let data_str = data.join("");
-            let mut hasher = openssl::sha::Sha1::new();
-            hasher.update(data_str.as_bytes());
-            let signature = hasher.finish();
-            Ok(hex::encode(signature))
+        if verify_info.signature != real_signature {
+            info!(
+                "消息头签名校验失败: acture_signature:{}, {:?}",
+                real_signature, verify_info,
+            );
+            return Err(WechatEncryptError::InvalidSignature(
+                "头签名校验失败".into(),
+            ));
         }
 
-        /// 校验基础的消息头
-        fn verify_base(&self, verify_info: &VerifyInfo) -> Result<(), WechatEncryptError> {
-            let real_signature =
-                self.get_signature(verify_info.timestamp, &verify_info.nonce, &"")?;
+        Ok(())
+    }
 
-            if verify_info.signature != real_signature {
-                info!(
-                    "消息头签名校验失败: acture_signature:{}, {:?}",
-                    real_signature, verify_info,
-                );
-                return Err(WechatEncryptError::InvalidSignature(
-                    "头签名校验失败".into(),
-                ));
-            }
+    /// 校验消息内容
+    pub fn verify_message(
+        token: &String,
+        verify_info: &VerifyInfo,
+        msg: &String,
+    ) -> Result<(), WechatEncryptError> {
+        match &verify_info.msg_signature {
+            None => Ok(()),
+            Some(signature) => {
+                let real_signature =
+                    get_signature(token, verify_info.timestamp, &verify_info.nonce, msg)?;
 
-            Ok(())
-        }
-
-        /// 校验消息内容
-        fn verify_message( &self, verify_info: &VerifyInfo, msg: &String,) -> Result<(), WechatEncryptError> {
-            match &verify_info.msg_signature {
-                None => Ok(()),
-                Some(signature) => {
-                    let real_signature =
-                        self.get_signature(verify_info.timestamp, &verify_info.nonce, msg)?;
-
-                    if signature != &real_signature {
-                        info!(
-                            "消息内容签名校验失败: verify:{:?}, acture_signature:{}, {}",
-                            verify_info, real_signature, msg,
-                        );
-                        return Err(WechatEncryptError::InvalidSignature(
-                            "消息签名校验失败".into(),
-                        ));
-                    }
-                    Ok(())
+                if signature != &real_signature {
+                    info!(
+                        "消息内容签名校验失败: verify:{:?}, acture_signature:{}, {}",
+                        verify_info, real_signature, msg,
+                    );
+                    return Err(WechatEncryptError::InvalidSignature(
+                        "消息签名校验失败".into(),
+                    ));
                 }
+                Ok(())
             }
         }
+    }
 
-        fn decrypt_echostr( &self, verify_info: &VerifyInfo, echo_str: &String,) -> Result<String, WechatEncryptError> {
-            // 校验消息头
-            self.verify_base(verify_info)?;
-            // 明文消息
-            if let None = verify_info.encrypt_type {
-                return Ok(echo_str.into());
-            }
-            self.verify_message(verify_info, echo_str)?;
-            // 尝试解密
-            let key =         match &self.key {
-                Some(key) => key,
-                None => return Ok(echo_str.clone()),
-            };
+    pub fn decrypt_echostr(
+        config: &WechatConfig,
+        token: &String,
+        verify_info: &VerifyInfo,
+        echo_str: &String,
+    ) -> Result<String, WechatEncryptError> {
+        // 校验消息头
+        verify_base(token, verify_info)?;
+        // 明文消息
+        if let None = verify_info.encrypt_type {
+            return Ok(echo_str.into());
+        }
+        verify_message(token, verify_info, echo_str)?;
+        // 尝试解密
+        let key = match &config.key {
+            Some(key) => key,
+            None => return Ok(echo_str.clone()),
+        };
 
-            let prp = PrpCrypto::new(key);
-            let msg = prp.decrypt(echo_str, &self.app_id);
-            match msg {
-                Ok(msg) => Ok(msg),
-                Err(e) => Err(WechatEncryptError::InvalidSignature(format!(
-                    "无法解密: {:?}",
-                    e
-                ))),
-            }
+        let prp = PrpCrypto::new(key);
+        let msg = prp.decrypt(echo_str, &config.app_id);
+        match msg {
+            Ok(msg) => Ok(msg),
+            Err(e) => Err(WechatEncryptError::InvalidSignature(format!(
+                "无法解密: {:?}",
+                e
+            ))),
+        }
+    }
+
+    pub fn encrypt_message(
+        config: &WechatConfig,
+        token: &String,
+        msg: &str,
+        timestamp: i64,
+        nonce: &str,
+    ) -> Result<String, WechatEncryptError> {
+        let key = match &config.key {
+            Some(key) => key,
+            None => return Err(WechatEncryptError::InvalidConfig),
+        };
+        let prp = PrpCrypto::new(&key);
+        let encrypted_msg = prp.encrypt(msg, &config.app_id)?;
+        let signature = get_signature(token, timestamp, nonce, &encrypted_msg)?;
+        let msg = XmlWriter::new()
+            .begin_tag("xml")?
+            .element("Encrypt", &encrypted_msg)?
+            .element("MsgSignature", &signature)?
+            .element("TimeStamp", &timestamp.to_string())?
+            .element("Nonce", &nonce.to_string())?
+            .end_tag()?
+            .to_string()?;
+        Ok(msg)
+    }
+
+    pub fn decrypt_message(
+        config: &WechatConfig,
+        token: &String,
+        verify_info: &VerifyInfo,
+        xml: &str,
+    ) -> Result<String, WechatEncryptError> {
+        verify_base(token, verify_info)?;
+
+        if let None = verify_info.encrypt_type {
+            return Ok(xml.into());
         }
 
-        fn encrypt_message(
-            &self,
-            msg: &str,
-            timestamp: i64,
-            nonce: &str,
-        ) -> Result<String, WechatEncryptError> {
-            let key = match &self.key {
-                Some(key) => key,
-                None => return Err(WechatEncryptError::InvalidConfig),
-            };
-            let prp = PrpCrypto::new(&key);
-            let encrypted_msg = prp.encrypt(msg, &self.app_id)?;
-            let signature = self.get_signature(timestamp, nonce, &encrypted_msg)?;
-            let msg = XmlWriter::new()
-                .begin_tag("xml")?
-                .element("Encrypt", &encrypted_msg)?
-                .element("MsgSignature", &signature)?
-                .element("TimeStamp", &timestamp.to_string())?
-                .element("Nonce", &nonce.to_string())?
-                .end_tag()?
-                .to_string()?;
-            Ok(msg)
-        }
+        use sxd_document::parser;
+        use sxd_xpath::evaluate_xpath;
 
-        fn decrypt_message(
-            &self,
-            verify_info: &VerifyInfo,
-            xml: &str,
-        ) -> Result<String, WechatEncryptError> {
-            self.verify_base(verify_info)?;
+        let package = parser::parse(xml).unwrap();
+        let doc = package.as_document();
 
-            if let None = verify_info.encrypt_type {
-                return Ok(xml.into());
+        let encrypted_msg = evaluate_xpath(&doc, "/xml/Encrypt")?.string();
+        verify_message(token, verify_info, &encrypted_msg)?;
+        match &config.key {
+            Some(key) => {
+                let prp = PrpCrypto::new(key);
+                let msg = prp.decrypt(&encrypted_msg, &config.app_id)?;
+                Ok(msg)
             }
-
-            use sxd_document::parser;
-            use sxd_xpath::evaluate_xpath;
-
-            let package = parser::parse(xml).unwrap();
-            let doc = package.as_document();
-
-            let encrypted_msg = evaluate_xpath(&doc, "/xml/Encrypt")?.string();
-            self.verify_message(verify_info, &encrypted_msg)?;
-            match &self.key {
-                Some(key) => {
-            let prp = PrpCrypto::new(key);
-            let msg = prp.decrypt(&encrypted_msg, &self.app_id)?;
-            Ok(msg)
-                },
-                None => {
-                    Ok(encrypted_msg)
-                }
-            }
+            None => Ok(encrypted_msg),
         }
     }
 }
@@ -1319,12 +1732,12 @@ mod crypt_tests {
     #[test]
     fn test_get_signature() {
         let config = WechatConfig::new(
-            Some("test".into()),
-            WechatConfig::decode_aes_key(&"kWxPEV2UEDyxWpmPdKC3F4dgPDmOvfKX1HGnEUDS1aQ=".into()).unwrap(),
+            WechatConfig::decode_aes_key(&"kWxPEV2UEDyxWpmPdKC3F4dgPDmOvfKX1HGnEUDS1aQ=".into())
+                .unwrap(),
             "test".into(),
-            None,
+            "".into(),
         );
-        let signature = config.get_signature(123456i64, "test", "rust").unwrap();
+        let signature = get_signature(&"test".into(), 123456i64, "test", "rust").unwrap();
         assert_eq!("d6056f2bb3ad3e30f4afa5ef90cc9ddcdc7b7b27", &signature);
     }
 
@@ -1336,10 +1749,10 @@ mod crypt_tests {
         let echo_str = "4ByGGj+sVCYcvGeQYhaKIk1o0pQRNbRjxybjTGblXrBaXlTXeOo1+bXFXDQQb1o6co6Yh9Bv41n7hOchLF6p+Q==";
 
         let config = WechatConfig::new(
-            Some("123456".into()),
-            WechatConfig::decode_aes_key(&"kWxPEV2UEDyxWpmPdKC3F4dgPDmOvfKX1HGnEUDS1aQ=".into()).unwrap(),
+            WechatConfig::decode_aes_key(&"kWxPEV2UEDyxWpmPdKC3F4dgPDmOvfKX1HGnEUDS1aQ=".into())
+                .unwrap(),
             "wx49f0ab532d5d035a".into(),
-            None,
+            "".into(),
         );
         let verify_info = VerifyInfo {
             signature: signature.into(),
@@ -1348,7 +1761,7 @@ mod crypt_tests {
             encrypt_type: Some("aes".into()),
             msg_signature: None,
         };
-        match config.decrypt_echostr(&verify_info, &echo_str.into()) {
+        match decrypt_echostr(&config, &"123456".into(), &verify_info, &echo_str.into()) {
             Ok(echostr) => assert_eq!("5927782489442352469".to_string(), echostr),
             Err(e) => panic!(format!("Check signature failed:{:?}", e)),
         }
@@ -1368,12 +1781,12 @@ mod crypt_tests {
             msg_signature: None,
         };
         let config = WechatConfig::new(
-            Some("123456".into()),
-            WechatConfig::decode_aes_key(&"kWxPEV2UEDyxWpmPdKC3F4dgPDmOvfKX1HGnEUDS1aQ=".into()).unwrap(),
+            WechatConfig::decode_aes_key(&"kWxPEV2UEDyxWpmPdKC3F4dgPDmOvfKX1HGnEUDS1aQ=".into())
+                .unwrap(),
             "wx49f0ab532d5d035a".into(),
-            None,
+            "".into(),
         );
-        match config.decrypt_echostr(&verify_info, &echo_str.into()) {
+        match decrypt_echostr(&config, &"123456".into(), &verify_info, &echo_str.into()) {
             Ok(_) => panic!("Check signature should failed"),
             Err(_) => {}
         }
@@ -1398,12 +1811,12 @@ mod crypt_tests {
             <Nonce>461056294</Nonce>\
             </xml>";
         let config = WechatConfig::new(
-            Some("123456".into()),
-            WechatConfig::decode_aes_key(&"kWxPEV2UEDyxWpmPdKC3F4dgPDmOvfKX1HGnEUDS1aQ=".into()).unwrap(),
+            WechatConfig::decode_aes_key(&"kWxPEV2UEDyxWpmPdKC3F4dgPDmOvfKX1HGnEUDS1aQ=".into())
+                .unwrap(),
             "wx49f0ab532d5d035a".into(),
-            None,
+            "".into(),
         );
-        let encrypted = config.encrypt_message(msg, timestamp, nonce).unwrap();
+        let encrypted = encrypt_message(&config, &"123456".into(), msg, timestamp, nonce).unwrap();
         assert_eq!(expected, &encrypted);
     }
 
@@ -1426,10 +1839,10 @@ mod crypt_tests {
         let timestamp = 1411525903;
         let nonce = "461056294";
         let config = WechatConfig::new(
-            Some("123456".into()),
-            WechatConfig::decode_aes_key(&"kWxPEV2UEDyxWpmPdKC3F4dgPDmOvfKX1HGnEUDS1aQ=".into()).unwrap(),
+            WechatConfig::decode_aes_key(&"kWxPEV2UEDyxWpmPdKC3F4dgPDmOvfKX1HGnEUDS1aQ=".into())
+                .unwrap(),
             "wx49f0ab532d5d035a".into(),
-            None,
+            "".into(),
         );
         let verify_info = VerifyInfo {
             signature: signature.into(),
@@ -1438,7 +1851,7 @@ mod crypt_tests {
             msg_signature: Some("74d92dfeb87ba7c714f89d98870ae5eb62dff26d".into()),
             encrypt_type: Some("aes".into()),
         };
-        let decrypted = config.decrypt_message(&verify_info, xml).unwrap();
+        let decrypted = decrypt_message(&config, &"123456".into(), &verify_info, xml).unwrap();
         assert_eq!(expected, &decrypted);
     }
 
@@ -1467,13 +1880,14 @@ mod crypt_tests {
             encrypt_type: Some("aes".into()),
         };
         let config = WechatConfig::new(
-            Some("testtoken123456".into()),
-            WechatConfig::decode_aes_key(&"znpfGFxELvUSxh0Gx4rJenvVQRrAhdTsioG08XR4z3S=".into()).unwrap(),
+            WechatConfig::decode_aes_key(&"znpfGFxELvUSxh0Gx4rJenvVQRrAhdTsioG08XR4z3S=".into())
+                .unwrap(),
             "wx11853b05910e1b6b".into(),
-            None,
+            "".into(),
         );
         // openid=
-        let decrypted = config.decrypt_message(&verify_info, xml).unwrap();
+        let decrypted =
+            decrypt_message(&config, &"testtoken123456".into(), &verify_info, xml).unwrap();
         assert_eq!(expected, &decrypted);
     }
 }

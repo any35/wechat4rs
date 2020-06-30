@@ -30,6 +30,25 @@ pub mod iso_date_format {
     }
 }
 
+/// #[derive(Deserialize, Debug)]
+/// struct Tachyon {
+///   #[serde(deserialize_with = "bool_from_int")]
+///   value: bool,
+/// }
+pub mod int2bool_format {
+    use serde::de::{Deserialize, Deserializer};
+
+    pub fn bool_from_int<'de, D>(deserializer: D) -> Result<bool, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match u8::deserialize(deserializer)? {
+            0 => Ok(false),
+            _ => Ok(true),
+        }
+    }
+}
+
 pub mod str_ext {
 
     #[derive(Copy, Clone, Debug, PartialEq)]
